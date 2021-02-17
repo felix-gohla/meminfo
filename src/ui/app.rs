@@ -1,145 +1,179 @@
-use gdk_pixbuf::Pixbuf;
 use gio::prelude::*;
 use gtk::prelude::*;
-use gtk::{
-    AboutDialogBuilder, Application, ApplicationWindow, ApplicationWindowBuilder, LabelBuilder,
-    Notebook,
-};
+use gtk::{Application, ApplicationWindow, ApplicationWindowBuilder, LabelBuilder, Notebook};
 
-use super::stacked_bar::StackedBar;
+use super::about::AboutDialog;
+use super::icon::icon;
+use super::OverviewPage;
+use crate::model::Overview;
+use std::sync::{Arc, Once};
+use std::rc::Rc;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+static START: Once = Once::new();
 
-fn icon(width: i32) -> Pixbuf {
-    let icon_bytes = include_bytes!("../resources/ram-memory.png");
-    let icon_stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from(icon_bytes));
-    Pixbuf::from_stream_at_scale::<gio::MemoryInputStream, gio::Cancellable>(
-        &icon_stream,
-        width,
-        width,
-        true,
-        None,
-    )
-    .expect("Icon should be convertible to Pixbuf")
+#[derive(Debug, Clone)]
+pub struct App {
+    application: Application,
+    window: Option<ApplicationWindow>,
+    about_dialog: Rc<Option<AboutDialog>>,
+    overview_page: Rc<OverviewPage>,
 }
 
-fn build_window(app: &Application) -> ApplicationWindow {
-    ApplicationWindowBuilder::new()
-        .application(app)
-        .title("MemInfo")
-        .icon(&icon(128))
-        .show_menubar(true)
-        .width_request(640)
-        .height_request(480)
-        .default_width(640)
-        .default_height(480)
-        .build()
-}
+impl App {
+    pub fn new(overview: Arc<Overview>) -> Arc<Self> {
+        START.call_once(|| {
+            if gtk::init().is_err() {
+                eprintln!("failed to initialize GTK Application");
+                std::process::exit(1);
+            }
+        });
 
-fn build_menubar(app: &Application) {
-    let menu = gio::Menu::new();
-    let menu_bar = gio::Menu::new();
-    let more_menu = gio::Menu::new();
-    let settings_menu = gio::Menu::new();
-    let submenu = gio::Menu::new();
+        let application = Application::new(Some("de.hpi.felix-gohla.meminfo"), Default::default())
+            .expect("Application::new failed");
 
-    // The first argument is the label of the menu item whereas the second is the action name. It'll
-    // makes more sense when you'll be reading the "add_actions" function.
-    menu.append(Some("Quit"), Some("app.quit"));
+        application.set_default();
 
-    settings_menu.append(Some("Sub another"), Some("app.sub_another"));
-    submenu.append(Some("Sub sub another"), Some("app.sub_sub_another"));
-    submenu.append(Some("Sub sub another2"), Some("app.sub_sub_another2"));
-    settings_menu.append_submenu(Some("Sub menu"), &submenu);
-    menu_bar.append_submenu(Some("_Another"), &settings_menu);
+        let overview_page = Rc::new(OverviewPage::new(overview));
 
-    more_menu.append(Some("About"), Some("app.about"));
-    menu_bar.append_submenu(Some("?"), &more_menu);
+        let app = Arc::new(App {
+            application: application,
+            window: None,
+            about_dialog: Rc::new(None),
+            overview_page,
+        });
 
-    app.set_app_menu(Some(&menu));
-    app.set_menubar(Some(&menu_bar));
-}
+        {
+            let app_clone = app.clone();
+            app.application.connect_startup(move |_| {
+                println!("application startup");
+                app_clone.build_menubar();
+                app_clone.add_accelerators();
+            });
+        }
 
-fn build_notebook(box_: &gtk::Box) {
-    let notebook = Notebook::new();
+        {
+            let app_clone = app.clone();
+            app.application.connect_activate(move |application| {
+                println!("application activate");
+                let mut app_clone = app_clone.clone();
+                let mut app_clone = Arc::make_mut(&mut app_clone);
+                let window = App::build_window(&application);
+                let about_dialog = AboutDialog::new(&window);
 
-    let overview_label = LabelBuilder::new().label("Overview").build();
-    notebook.append_page(&build_overview_page(), Some(&overview_label));
-    notebook.show_all();
+                app_clone.window = Some(window);
+                app_clone.about_dialog = Rc::new(Some(about_dialog));
 
-    box_.pack_start(&notebook, true, true, 0);
-}
+                app_clone.add_actions();
+                app_clone.build_ui();
+            });
+        }
+        app
+    }
 
-fn build_overview_page() -> gtk::Box {
-    let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    let sb = StackedBar::new(6);
-    sb.set_property_height_request(64);
-    page.pack_start(&sb, false, true, 0);
+    fn build_window(application: &Application) -> ApplicationWindow {
+        ApplicationWindowBuilder::new()
+            .application(application)
+            .title("MemInfo")
+            .icon(&icon(128))
+            .show_menubar(true)
+            .width_request(640)
+            .height_request(480)
+            .default_width(640)
+            .default_height(480)
+            .build()
+    }
 
-    page
-}
+    fn build_menubar(&self) {
+        let menu = gio::Menu::new();
+        let menu_bar = gio::Menu::new();
+        let more_menu = gio::Menu::new();
+        let settings_menu = gio::Menu::new();
+        let submenu = gio::Menu::new();
 
-fn show_about(window: &ApplicationWindow) {
-    let icon_buf = icon(64);
+        // The first argument is the label of the menu item whereas the second is the action name. It'll
+        // makes more sense when you'll be reading the "add_actions" function.
+        menu.append(Some("Reload"), Some("app.reload"));
+        menu.append(Some("Quit"), Some("app.quit"));
 
-    let p = AboutDialogBuilder::new()
-        .title("About MemInfo")
-        .authors(vec!["Felix Gohla (HPI)".to_string()])
-        .copyright("Copyright © 2021 by Felix Gohla")
-        .version(VERSION)
-        .icon(&icon_buf)
-        .logo(&icon_buf)
-        .website("https://osm.hpi.de/")
-        .website_label("Operating Systems And Middleware")
-        .transient_for(window)
-        .build();
-    p.show_all();
-}
+        settings_menu.append(Some("Sub another"), Some("app.sub_another"));
+        submenu.append(Some("Sub sub another"), Some("app.sub_sub_another"));
+        submenu.append(Some("Sub sub another2"), Some("app.sub_sub_another2"));
+        settings_menu.append_submenu(Some("Sub menu"), &submenu);
+        menu_bar.append_submenu(Some("_Another"), &settings_menu);
 
-fn add_actions(app: &Application, window: &ApplicationWindow) {
-    let quit = gio::SimpleAction::new("quit", None);
-    quit.connect_activate(glib::clone!(@weak window => move |_, _| {
-        window.close();
-    }));
+        more_menu.append(Some("About"), Some("app.about"));
+        menu_bar.append_submenu(Some("?"), &more_menu);
 
-    let about = gio::SimpleAction::new("about", None);
-    about.connect_activate(glib::clone!(@weak window => move |_, _| {
-        show_about(&window);
-    }));
+        self.application.set_app_menu(Some(&menu));
+        self.application.set_menubar(Some(&menu_bar));
+    }
 
-    // We need to add all the actions to the application so they can be taken into account.
-    app.add_action(&about);
-    app.add_action(&quit);
-}
+    fn add_accelerators(&self) {
+        self.application.set_accels_for_action("app.about", &["F1"]);
+        self.application
+            .set_accels_for_action("app.reload", &["F5"]);
+        self.application
+            .set_accels_for_action("app.quit", &["<Primary>Q"]);
+    }
 
-fn build_ui(app: &Application) {
-    let window = build_window(app);
+    fn add_actions(&self) {
+        let window = self
+            .window
+            .as_ref()
+            .expect("ApplicationWindow has been initialized for adding actions.");
 
-    let v_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let reload = gio::SimpleAction::new("reload", None);
+        {
+            let overview_page_clone = self.overview_page.clone();
+            reload.connect_activate(move |_, _| {
+                overview_page_clone.update();
+            });
+        }
 
-    build_notebook(&v_box);
-    window.add(&v_box);
+        let quit = gio::SimpleAction::new("quit", None);
+        quit.connect_activate(glib::clone!(@weak window => move |_, _| {
+            window.close();
+        }));
 
-    build_menubar(&app);
-    add_actions(&app, &window);
+        let about = gio::SimpleAction::new("about", None);
+        let dialog = self.about_dialog.clone();
+        about.connect_activate(move |_, _| {
+            dialog
+                .as_ref()
+                .as_ref()
+                .expect("AboutDialog has been initialized.")
+                .show();
+        });
 
-    window.show_all();
-}
+        // We need to add all the actions to the application so they can be taken into account.
+        self.application.add_action(&reload);
+        self.application.add_action(&about);
+        self.application.add_action(&quit);
+    }
 
-fn add_accelerators(app: &Application) {
-    app.set_accels_for_action("app.about", &["F1"]);
-    app.set_accels_for_action("app.quit", &["<Primary>Q"]);
-}
+    fn build_ui(&self) {
+        let window = self
+            .window
+            .as_ref()
+            .expect("ApplicationWindow has been initialized.");
+        let v_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
 
-pub fn create_application() -> Application {
-    let application = Application::new(Some("de.hpi.felix-gohla.meminfo"), Default::default())
-        .expect("Application::new failed");
+        self.build_notebook(&v_box);
+        window.add(&v_box);
+        window.show_all();
+    }
 
-    application.connect_startup(|app| {
-        add_accelerators(app);
-    });
-    application.connect_activate(|app| {
-        build_ui(app);
-    });
-    application
+    fn build_notebook(&self, container: &gtk::Box) {
+        let notebook = Notebook::new();
+
+        let overview_label = LabelBuilder::new().label("Overview").build();
+        notebook.append_page(self.overview_page.page(), Some(&overview_label));
+        notebook.show_all();
+
+        container.pack_start(&notebook, true, true, 0);
+    }
+
+    pub fn run(&self, args: &Vec<String>) {
+        self.application.run(args);
+    }
 }
