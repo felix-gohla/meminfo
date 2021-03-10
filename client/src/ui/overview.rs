@@ -15,14 +15,11 @@ pub struct OverviewPage {
 impl OverviewPage {
     pub fn new(overview: Arc<Overview>) -> Self {
         let container = gtk::Box::new(Orientation::Vertical, 0);
-        let label = LabelBuilder::new()
-            .name("max-ram")
-            .label(&format!("{}", overview.max_ram.load(Ordering::Relaxed)))
-            .build();
+        let label = LabelBuilder::new().name("max-ram").label("---").build();
         container.pack_start(&label, false, false, 0);
 
-        let sb = StackedBar::new(6);
-        sb.set_property_height_request(64);
+        let sb = StackedBar::new(2);
+        sb.set_property_height_request(48);
         container.pack_start(&sb, false, true, 0);
 
         OverviewPage {
@@ -37,9 +34,13 @@ impl OverviewPage {
     }
 
     pub fn update(&self) {
+        let free = self.overview.ram_free.load(Ordering::Relaxed);
+        let total = self.overview.ram_total.load(Ordering::Relaxed);
         self.label.set_text(&format!(
-            "{}",
-            self.overview.max_ram.load(Ordering::Relaxed)
+            "{} / {} ({:.2}%)",
+            total - free,
+            total,
+            (total - free) as f64 * 100f64 / total as f64,
         ));
     }
 }

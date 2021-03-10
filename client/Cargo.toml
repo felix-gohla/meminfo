@@ -1,0 +1,24 @@
+[package]
+name = "meminfo"
+version = "0.1.0"
+authors = ["Felix Gohla"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glib-sys = "^0"
+glib = "0.10.3"
+gio = "^0"
+gtk = { version = "0.9.2", features = ["v3_24_9"] }
+gdk = "^0"
+gdk-pixbuf = "^0"
+cairo-rs = "^0"
+
+futures = "0.3.12"
+procfs = "0.9.1"
+zbus = "1.8.0"
+zbus_polkit = "1.2.0"
+users = "0.11.0"
+
+rand = {version = "0.8.3", features = ["small_rng"]}
